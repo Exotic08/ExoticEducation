@@ -727,7 +727,8 @@ function renderLoginForm() {
     const loginBtn = document.getElementById('loginBtn');
 
     loginBtn.addEventListener('click', async () => {
-        const username = document.getElementById('username').value.trim();
+        const rawUsername = document.getElementById('username').value.trim();
+        const username = rawUsername.toLowerCase();
         const password = document.getElementById('password').value;
         errorEl.textContent = '';
 
@@ -823,7 +824,8 @@ function renderRegisterForm() {
 
     registerBtn.addEventListener('click', async () => {
         const displayName = document.getElementById('displayName').value.trim();
-        const username = document.getElementById('username').value.trim();
+        const rawUsername = document.getElementById('username').value.trim();
+        const username = rawUsername.toLowerCase();
         const password = document.getElementById('password').value;
         errorEl.textContent = '';
 
@@ -843,10 +845,15 @@ function renderRegisterForm() {
             const snapshot = await db.ref('users').orderByChild('username').equalTo(username).once('value');
             if (snapshot.exists()) {
                 errorEl.textContent = 'Tên đăng nhập đã tồn tại, hãy chọn tên khác.';
+                registerBtn.disabled = false;
+                registerBtn.textContent = 'Đăng ký';
                 return;
             }
+            
             const hashedPassword = CryptoJS.SHA256(password).toString();
             const newUserRef = db.ref('users').push();
+            const newUserId = newUserRef.key;
+            
             await newUserRef.set({ 
                 displayName, 
                 username, 
@@ -860,17 +867,40 @@ function renderRegisterForm() {
                 points: 500,
                 exp: 0,
                 streak: 1,
+                dev: 0,
                 lastActiveDate: '',
                 isMuted: false,
                 isBanned: false,
+                bannedUntil: null,
                 inventory: { borders: ['none'], frames: ['none'], titles: ['none'], presets: ['none'] }
             });
 
-            showToast('Đăng ký thành công! Hãy đăng nhập.');
-            renderLoginForm();
+            showToast('Đăng ký thành công! Đang tự động đăng nhập...');
+            
+            // Auto Login sau khi đăng ký
+            localStorage.setItem('user', JSON.stringify({
+                userId: newUserId,
+                username: username,
+                displayName: displayName,
+                avatarBorderId: 'none',
+                chatFrameId: 'none',
+                chatTitleId: 'none',
+                avatarPresetId: 'none',
+                avatarUrl: '',
+                points: 500,
+                streak: 1,
+                exp: 0,
+                dev: 0,
+                lastActiveDate: '',
+                isMuted: false,
+                inventory: { borders: ['none'], frames: ['none'], titles: ['none'], presets: ['none'] }
+            }));
+            
+            initGlobalSync();
+            renderDashboard();
+
         } catch (err) {
             errorEl.textContent = 'Lỗi kết nối, vui lòng thử lại.';
-        } finally {
             registerBtn.disabled = false;
             registerBtn.textContent = 'Đăng ký';
         }
@@ -1011,8 +1041,9 @@ function renderGlobalLeaderboard(main) {
     
     main.innerHTML = `
         <style>
-            .lb-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; overflow-x: auto; white-space: nowrap; padding-bottom: 5px; }
-            .lb-tabs button { flex: 1; border-radius: var(--radius-sm); padding: 0.6rem 1rem; }
+            .lb-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; overflow-x: auto; white-space: nowrap; padding-bottom: 5px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+            .lb-tabs::-webkit-scrollbar { display: none; }
+            .lb-tabs button { flex: 0 0 auto; border-radius: var(--radius-sm); padding: 0.6rem 1rem; }
             .podium-container { display: flex; align-items: flex-end; justify-content: center; gap: 1rem; margin-top: 2rem; margin-bottom: 2.5rem; height: 220px; }
             .podium-item { display: flex; flex-direction: column; align-items: center; text-align: center; width: 30%; position: relative; animation: cardIn 0.5s var(--ease) backwards; }
             .podium-item.rank-1 { width: 36%; z-index: 3; animation-delay: 0.1s; }
@@ -1281,11 +1312,11 @@ function renderShop(main) {
                 </div>
             </div>
 
-            <div class="mode-toggle" style="margin-bottom: 1.5rem; width: 100%; display: flex;">
-               <button class="${shopCurrentTab === 'avatars' ? 'active' : ''}" data-tab="avatars" style="flex:1; border-radius: var(--radius-sm); margin-right: 0.5rem;">🖼️ Avatar (${presets.length})</button>
-               <button class="${shopCurrentTab === 'borders' ? 'active' : ''}" data-tab="borders" style="flex:1; border-radius: var(--radius-sm); margin-right: 0.5rem;">🖼️ Viền (${borders.length})</button>
-               <button class="${shopCurrentTab === 'frames' ? 'active' : ''}" data-tab="frames" style="flex:1; border-radius: var(--radius-sm); margin-right: 0.5rem;">💬 Khung Chat (${frames.length})</button>
-               <button class="${shopCurrentTab === 'titles' ? 'active' : ''}" data-tab="titles" style="flex:1; border-radius: var(--radius-sm);">🎖️ Danh hiệu (${titles.length})</button>
+            <div class="mode-toggle" style="margin-bottom: 1.5rem; width: 100%; display: flex; overflow-x: auto; white-space: nowrap; gap: 0.5rem; padding: 0.4rem; scrollbar-width: none; -webkit-overflow-scrolling: touch;">
+               <button class="${shopCurrentTab === 'avatars' ? 'active' : ''}" data-tab="avatars" style="flex: 0 0 auto; border-radius: var(--radius-sm);">🖼️ Avatar (${presets.length})</button>
+               <button class="${shopCurrentTab === 'borders' ? 'active' : ''}" data-tab="borders" style="flex: 0 0 auto; border-radius: var(--radius-sm);">🖼️ Viền (${borders.length})</button>
+               <button class="${shopCurrentTab === 'frames' ? 'active' : ''}" data-tab="frames" style="flex: 0 0 auto; border-radius: var(--radius-sm);">💬 Khung Chat (${frames.length})</button>
+               <button class="${shopCurrentTab === 'titles' ? 'active' : ''}" data-tab="titles" style="flex: 0 0 auto; border-radius: var(--radius-sm);">🎖️ Danh hiệu (${titles.length})</button>
             </div>
             
             <div class="${shopCurrentTab === 'frames' ? 'visual-picker-grid' : 'avatar-grid'}" id="shop-grid">
@@ -1535,6 +1566,13 @@ function renderDeveloper(main) {
                                 <input type="checkbox" id="mng-ban" ${uInfo.isBanned ? 'checked' : ''} style="width: auto;"> Khóa Tài Khoản
                             </label>
                         </div>
+                        
+                        <div class="field" style="margin-bottom: 1rem; padding: 0.75rem; background: #fff1f2; border-radius: var(--radius-sm); border: 1px dashed #fca5a5;">
+                            <label style="color: #ef4444; font-weight: bold;">🔑 Đặt lại mật khẩu (Tùy chọn)</label>
+                            <input type="text" id="mng-new-password" placeholder="Nhập mật khẩu mới nếu muốn đổi..." style="border-color: #fca5a5;">
+                            <span style="font-size: 0.75rem; color: #ef4444;">* Bỏ trống nếu không muốn đổi mật khẩu. User sẽ dùng pass này để đăng nhập.</span>
+                        </div>
+
                         <div style="margin-bottom: 1.5rem;">
                             <button id="mng-reset-info" class="btn-ghost" style="color: #ef4444; border: 1.5px dashed #ef4444; width: 100%;">🔄 Đặt lại Avatar/Tên/Danh hiệu về mặc định</button>
                         </div>
@@ -1566,6 +1604,14 @@ function renderDeveloper(main) {
                     const newStreak = parseInt(backdrop.querySelector('#mng-streak').value) || 1;
                     const isMuted = backdrop.querySelector('#mng-mute').checked;
                     const isBanned = backdrop.querySelector('#mng-ban').checked;
+                    const adminResetPw = backdrop.querySelector('#mng-new-password').value.trim();
+
+                    if (adminResetPw && adminResetPw.length < 6) {
+                        showToast('Mật khẩu mới phải từ 6 ký tự trở lên!', 'error');
+                        saveBtn.disabled = false;
+                        saveBtn.textContent = 'Lưu thay đổi';
+                        return;
+                    }
 
                     const updates = {
                         points: newPoints,
@@ -1573,6 +1619,10 @@ function renderDeveloper(main) {
                         isMuted: isMuted,
                         isBanned: isBanned
                     };
+
+                    if (adminResetPw) {
+                        updates.passwordHash = CryptoJS.SHA256(adminResetPw).toString();
+                    }
 
                     if (resetTriggered) {
                         updates.displayName = uInfo.username;
@@ -3443,9 +3493,14 @@ async function renderStats(main) {
                     <button id="save-name-btn" class="btn-outline">Cập nhật</button>
                 </div>
             </div>
-            <div class="field" style="max-width: 400px; margin-top: 1rem;">
-                <label>Đổi mật khẩu</label>
-                <button class="btn-outline" style="width: fit-content;" onclick="alert('Tính năng đổi mật khẩu đang được bảo trì.')">Đổi mật khẩu</button>
+            <div class="field" style="max-width: 400px; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px dashed var(--border);">
+                <h4 style="margin: 0 0 1rem 0; color: var(--text-heading); font-size: 1rem;">🔐 Đổi mật khẩu</h4>
+                <div style="display:flex; flex-direction:column; gap:0.75rem;">
+                    <input type="password" id="setting-old-pw" placeholder="Mật khẩu hiện tại">
+                    <input type="password" id="setting-new-pw" placeholder="Mật khẩu mới (tối thiểu 6 ký tự)">
+                    <input type="password" id="setting-confirm-pw" placeholder="Xác nhận mật khẩu mới">
+                    <button id="save-pw-btn" class="btn-outline" style="width: fit-content; margin-top: 0.5rem;">Cập nhật mật khẩu</button>
+                </div>
             </div>
         </div>
     `;
@@ -3528,6 +3583,47 @@ async function renderStats(main) {
             if(heroNameEl) heroNameEl.textContent = newName;
         } catch(e) {
             showToast('Lỗi cập nhật tên', 'error');
+        }
+    });
+
+    // Bind Change Password
+    document.getElementById('save-pw-btn').addEventListener('click', async () => {
+        const oldPw = document.getElementById('setting-old-pw').value;
+        const newPw = document.getElementById('setting-new-pw').value;
+        const confirmPw = document.getElementById('setting-confirm-pw').value;
+
+        if (!oldPw || !newPw || !confirmPw) return showToast('Vui lòng nhập đầy đủ thông tin mật khẩu!', 'error');
+        if (newPw.length < 6) return showToast('Mật khẩu mới phải có ít nhất 6 ký tự!', 'error');
+        if (newPw !== confirmPw) return showToast('Mật khẩu xác nhận không khớp!', 'error');
+
+        const btn = document.getElementById('save-pw-btn');
+        btn.disabled = true;
+        btn.textContent = 'Đang kiểm tra...';
+
+        try {
+            const snap = await db.ref(`users/${user.userId}`).once('value');
+            const data = snap.val();
+            const hashedOldPw = CryptoJS.SHA256(oldPw).toString();
+
+            if (data.passwordHash !== hashedOldPw) {
+                showToast('Mật khẩu hiện tại không đúng!', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Cập nhật mật khẩu';
+                return;
+            }
+
+            const hashedNewPw = CryptoJS.SHA256(newPw).toString();
+            await db.ref(`users/${user.userId}`).update({ passwordHash: hashedNewPw });
+            
+            showToast('Đổi mật khẩu thành công!', 'success');
+            document.getElementById('setting-old-pw').value = '';
+            document.getElementById('setting-new-pw').value = '';
+            document.getElementById('setting-confirm-pw').value = '';
+        } catch (e) {
+            showToast('Lỗi đổi mật khẩu', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Cập nhật mật khẩu';
         }
     });
 
