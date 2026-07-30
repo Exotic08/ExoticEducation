@@ -563,6 +563,8 @@ input[type="range"] {
     flex: 1;
     height: 100%;
     overflow-y: auto;
+    overflow-x: hidden; /* NGĂN CHẶN TRÀN VIỀN NGANG */
+    min-width: 0; /* RẤT QUAN TRỌNG: Ép thẻ không được phình to hơn màn hình */
     padding: 2rem 2.25rem;
 }
 
@@ -1104,17 +1106,19 @@ select {
     border-radius: 999px;
     padding: 0.25rem;
     gap: 0.25rem;
-    overflow-x: auto;
-    white-space: nowrap;
-    -webkit-overflow-scrolling: touch;
+    overflow-x: auto; /* Bật thanh cuộn ngang */
+    white-space: nowrap; /* Không cho rớt dòng */
+    -webkit-overflow-scrolling: touch; /* Cuộn mượt trên di động */
     scrollbar-width: none;
+    max-width: 100%; /* Ép chiều rộng tối đa bằng màn hình */
 }
 .mode-toggle::-webkit-scrollbar {
     display: none;
 }
 
 .mode-toggle button {
-    flex-shrink: 0;
+    flex: 0 0 auto; /* Ép nút giữ nguyên kích thước nội dung, không bị bóp méo chữ */
+    white-space: nowrap;
     box-shadow: none;
     background: transparent;
     color: var(--text-soft);
@@ -1926,6 +1930,8 @@ select {
         padding: 1.25rem 1.25rem 90px 1.25rem !important; 
         height: 100vh;
         overflow-y: auto;
+        overflow-x: hidden;
+        min-width: 0; /* Khắc phục lỗi Flexbox làm phình giao diện trên Mobile */
     }
     
     .chat-container {

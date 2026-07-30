@@ -140,6 +140,52 @@ const QUESTION_TYPES = {
 const SUBJECTS = ['Toán', 'Vật Lý', 'Hóa Học', 'Sinh Học', 'Tiếng Anh', 'Lịch Sử', 'Địa Lý', 'Khác'];
 
 /* ==========================================================================
+   ULTIMATE SANDBOX ENGINE (AUDIO & 3D TILT & INTERACTIVE STATES)
+========================================================================== */
+window.playSandboxAudio = function(url) {
+    if(!url) return;
+    const audio = new Audio(url);
+    audio.volume = 0.5;
+    audio.play().catch(e=>console.warn("Audio blocked by browser"));
+};
+
+document.addEventListener('mouseover', e => {
+    const el = e.target.closest('[data-audio-hover]');
+    if(el && !el.dataset.hoverPlayed) {
+        window.playSandboxAudio(el.dataset.audioHover);
+        el.dataset.hoverPlayed = "true";
+    }
+});
+document.addEventListener('mouseout', e => {
+    const el = e.target.closest('[data-audio-hover]');
+    if(el) el.dataset.hoverPlayed = "";
+});
+document.addEventListener('mousedown', e => {
+    const el = e.target.closest('[data-audio-click]');
+    if(el) window.playSandboxAudio(el.dataset.audioClick);
+});
+
+document.addEventListener('mousemove', e => {
+    const tilts = document.querySelectorAll('.tilt-enabled');
+    tilts.forEach(tilt => {
+        const rect = tilt.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+        const rotateX = ((y - centerY) / centerY) * -15;
+        const rotateY = ((x - centerX) / centerX) * 15;
+        tilt.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.05, 1.05, 1.05)`;
+    });
+});
+document.addEventListener('mouseout', e => {
+    const tilts = document.querySelectorAll('.tilt-enabled');
+    tilts.forEach(tilt => {
+        tilt.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
+    });
+});
+
+/* ==========================================================================
    DYNAMIC CONFIGURATION MANAGERS (REALTIME SYNC)
 ========================================================================== */
 
@@ -147,16 +193,17 @@ let dynamicBorders = [];
 let dynamicFrames = [];
 let dynamicTitles = [];
 let dynamicAvatars = [];
-let isSyncing = false;
+let activeListeners = [];
 
 function initGlobalSync() {
-    if (isSyncing) return;
-    isSyncing = true;
-    
+    activeListeners.forEach(l => l.ref.off('value', l.cb));
+    activeListeners = [];
+
     const user = getCurrentUser();
 
     if (user) {
-        db.ref(`users/${user.userId}`).on('value', snap => {
+        const userRef = db.ref(`users/${user.userId}`);
+        const userCb = snap => {
             const data = snap.val();
             if (data) {
                 if (data.isBanned) {
@@ -212,23 +259,27 @@ function initGlobalSync() {
                 }));
                 refreshCurrentUI();
             }
-        });
+        };
+        userRef.on('value', userCb);
+        activeListeners.push({ ref: userRef, cb: userCb });
 
-        // 🟢 CẬP NHẬT TRẠNG THÁI ONLINE/OFFLINE TỰ ĐỘNG
         const connectedRef = db.ref('.info/connected');
-        const myStatusRef = db.ref(`users/${user.userId}/isOnline`);
-        const myLastSeenRef = db.ref(`users/${user.userId}/lastSeen`);
-        connectedRef.on('value', (snap) => {
+        const connectedCb = (snap) => {
             if (snap.val() === true) {
+                const myStatusRef = db.ref(`users/${user.userId}/isOnline`);
+                const myLastSeenRef = db.ref(`users/${user.userId}/lastSeen`);
                 myStatusRef.onDisconnect().set(false).then(() => {
                     myStatusRef.set(true);
                     myLastSeenRef.set(firebase.database.ServerValue.TIMESTAMP);
                 });
             }
-        });
+        };
+        connectedRef.on('value', connectedCb);
+        activeListeners.push({ ref: connectedRef, cb: connectedCb });
     }
 
-    db.ref('app_settings/broadcast').on('value', snap => {
+    const broadcastRef = db.ref('app_settings/broadcast');
+    const broadcastCb = snap => {
         const data = snap.val();
         if (data) {
             const lastTs = parseInt(localStorage.getItem('lastBroadcastTime') || '0');
@@ -236,31 +287,45 @@ function initGlobalSync() {
                 showBroadcastBanner(data.message, data.timestamp);
             }
         }
-    });
+    };
+    broadcastRef.on('value', broadcastCb);
+    activeListeners.push({ ref: broadcastRef, cb: broadcastCb });
 
-    db.ref('app_borders').on('value', snap => {
+    const bordersRef = db.ref('app_borders');
+    const bordersCb = snap => {
         const data = snap.val() || {};
         dynamicBorders = Object.keys(data).map(key => ({ id: key, ...data[key] }));
         refreshCurrentUI();
-    });
+    };
+    bordersRef.on('value', bordersCb);
+    activeListeners.push({ ref: bordersRef, cb: bordersCb });
 
-    db.ref('app_chat_bubbles').on('value', snap => {
+    const framesRef = db.ref('app_chat_bubbles');
+    const framesCb = snap => {
         const data = snap.val() || {};
         dynamicFrames = Object.keys(data).map(key => ({ id: key, ...data[key] }));
         refreshCurrentUI();
-    });
+    };
+    framesRef.on('value', framesCb);
+    activeListeners.push({ ref: framesRef, cb: framesCb });
 
-    db.ref('app_titles').on('value', snap => {
+    const titlesRef = db.ref('app_titles');
+    const titlesCb = snap => {
         const data = snap.val() || {};
         dynamicTitles = Object.keys(data).map(key => ({ id: key, ...data[key] }));
         refreshCurrentUI();
-    });
+    };
+    titlesRef.on('value', titlesCb);
+    activeListeners.push({ ref: titlesRef, cb: titlesCb });
 
-    db.ref('app_preset_avatars').on('value', snap => {
+    const avatarsRef = db.ref('app_preset_avatars');
+    const avatarsCb = snap => {
         const data = snap.val() || {};
         dynamicAvatars = Object.keys(data).map(key => ({ id: key, ...data[key] }));
         refreshCurrentUI();
-    });
+    };
+    avatarsRef.on('value', avatarsCb);
+    activeListeners.push({ ref: avatarsRef, cb: avatarsCb });
 }
 
 function refreshCurrentUI() {
@@ -362,33 +427,84 @@ function renderAvatarWithBorderObj(name, borderObj, size = 'md', imgId = '', ava
         xl: { container: '120px', avatar: '80px', font: '2.5rem' },
     };
     const s = sizeClasses[size] || sizeClasses.md;
-    const { url = '', offsetX = 0, offsetY = 0, scale = 100 } = borderObj || {};
+    const uid = `ava-${Math.random().toString(36).substr(2,5)}`;
 
     let borderHtml = '';
-    if (url && url !== 'none') {
+    let borderSandboxStyle = '';
+    let borderAudio = '';
+    let borderTilt = '';
+    let borderFilter = '';
+
+    if (borderObj && borderObj.id !== 'none') {
+        const { url = '', offsetX = 0, offsetY = 0, scale = 100, cssVars, defaultCSS, hoverCSS, activeCSS, audioHover, audioClick, enableTilt, svgFilter } = borderObj;
+        
+        if (cssVars || defaultCSS || hoverCSS || activeCSS) {
+            borderSandboxStyle = `<style>
+                .border-${uid} { ${cssVars || ''} ${defaultCSS || ''} transition: all 0.3s ease; }
+                .border-${uid}:hover { ${hoverCSS || ''} }
+                .border-${uid}:active { ${activeCSS || ''} }
+            </style>`;
+        }
+        
+        borderAudio = `${audioHover ? `data-audio-hover="${escapeHtml(audioHover)}"` : ''} ${audioClick ? `data-audio-click="${escapeHtml(audioClick)}"` : ''}`;
+        borderTilt = enableTilt ? 'tilt-enabled' : '';
+        borderFilter = svgFilter ? `<div style="position:absolute; width:0; height:0; overflow:hidden;">${svgFilter}</div>` : '';
+
         const transformStyle = `translate(calc(-50% + ${offsetX}px), calc(-50% + ${offsetY}px)) scale(${scale / 100})`;
-        borderHtml = `<img ${imgId ? `id="${imgId}"` : ''} src="${escapeHtml(url)}" style="position: absolute; top: 50%; left: 50%; width: 100%; height: 100%; object-fit: contain; pointer-events: none; transform-origin: center center; transform: ${transformStyle}; z-index: 2; transition: transform 0.1s linear;" />`;
+        if (url) {
+            borderHtml = `<img class="border-${uid}" ${imgId ? `id="${imgId}"` : ''} src="${escapeHtml(url)}" style="position: absolute; top: 50%; left: 50%; width: 100%; height: 100%; object-fit: contain; pointer-events: none; transform-origin: center center; transform: ${transformStyle}; z-index: 4;" />`;
+        } else {
+            borderHtml = `<div class="border-${uid}" style="position: absolute; top: 50%; left: 50%; width: 100%; height: 100%; pointer-events: none; transform-origin: center center; transform: ${transformStyle}; z-index: 4;"></div>`;
+        }
     }
 
     let coreAvatar = '';
-    if (avatarUrl) {
-        if (presetObj && presetObj.id !== 'none') {
-            const tX = presetObj.offsetX || 0;
-            const tY = presetObj.offsetY || 0;
-            const tS = presetObj.scale || 100;
-            coreAvatar = `<img src="${escapeHtml(avatarUrl)}" style="position: absolute; top: 50%; left: 50%; width: 100%; height: 100%; object-fit: contain; transform: translate(calc(-50% + ${tX}px), calc(-50% + ${tY}px)) scale(${tS / 100});" />`;
-        } else {
-            coreAvatar = `<img src="${escapeHtml(avatarUrl)}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;" />`;
+    let styleBlock = '';
+    let effectHtml = '';
+    let avaAudio = '';
+    let avaTilt = '';
+    let avaFilter = '';
+
+    if (presetObj && presetObj.id !== 'none') {
+        const pClass = `preset-${presetObj.id}-${uid}`;
+        const { cssVars, defaultCSS, hoverCSS, activeCSS, audioHover, audioClick, enableTilt, svgFilter, effectCode, designCode, avatarType, effectLayer, offsetX=0, offsetY=0, scale=100 } = presetObj;
+        
+        if (cssVars || defaultCSS || hoverCSS || activeCSS || effectCode) {
+            styleBlock = `<style>
+                .${pClass}-design { ${cssVars || ''} ${defaultCSS || ''} transition: all 0.3s ease; }
+                .${pClass}-design:hover { ${hoverCSS || ''} }
+                .${pClass}-design:active { ${activeCSS || ''} }
+                ${effectCode || ''}
+            </style>`;
         }
+        
+        avaAudio = `${audioHover ? `data-audio-hover="${escapeHtml(audioHover)}"` : ''} ${audioClick ? `data-audio-click="${escapeHtml(audioClick)}"` : ''}`;
+        avaTilt = enableTilt ? 'tilt-enabled' : '';
+        avaFilter = svgFilter ? `<div style="position:absolute; width:0; height:0; overflow:hidden;">${svgFilter}</div>` : '';
+
+        if (avatarType === 'code') {
+            coreAvatar = `<div class="${pClass}-design" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center;">${designCode || ''}</div>`;
+        } else {
+            const realUrl = avatarUrl || presetObj.url;
+            if (realUrl) {
+                coreAvatar = `<img class="${pClass}-design" src="${escapeHtml(realUrl)}" style="position: absolute; top: 50%; left: 50%; width: 100%; height: 100%; object-fit: contain; transform: translate(calc(-50% + ${offsetX}px), calc(-50% + ${offsetY}px)) scale(${scale / 100});" />`;
+            } else {
+                coreAvatar = `<div class="${pClass}-design">${initials(name)}</div>`;
+            }
+        }
+        effectHtml = effectCode ? `<div class="preset-${presetObj.id}-effect" style="position:absolute; top:50%; left:50%; width:${s.avatar}; height:${s.avatar}; transform:translate(-50%, -50%); z-index: ${effectLayer === 'front' ? 3 : 0}; pointer-events:none;"></div>` : '';
     } else {
-        coreAvatar = initials(name);
+        coreAvatar = avatarUrl ? `<img src="${escapeHtml(avatarUrl)}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;" />` : initials(name);
     }
 
     return `
-        <div title="${escapeHtml(name)}" style="position: relative; width: ${s.container}; height: ${s.container}; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: visible;">
+        ${borderSandboxStyle} ${borderFilter} ${styleBlock} ${avaFilter}
+        <div class="${avaTilt} ${borderTilt}" ${avaAudio} ${borderAudio} title="${escapeHtml(name)}" style="position: relative; width: ${s.container}; height: ${s.container}; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: visible;">
+            ${presetObj && presetObj.effectLayer === 'back' ? effectHtml : ''}
             <div style="position: relative; width: ${s.avatar}; height: ${s.avatar}; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--primary)); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: ${s.font}; overflow: hidden; z-index: 1;">
                 ${coreAvatar}
             </div>
+            ${presetObj && presetObj.effectLayer === 'front' ? effectHtml : ''}
             ${borderHtml}
         </div>
     `;
@@ -396,12 +512,28 @@ function renderAvatarWithBorderObj(name, borderObj, size = 'md', imgId = '', ava
 
 function getTitleHtml(titleObj) {
     if(!titleObj || titleObj.id === 'none' || (!titleObj.textContent && !titleObj.imageUrl)) return '';
-    const { type, imageUrl, textContent, textColor, bgColor, borderColor } = titleObj;
+    const { id, type, imageUrl, textContent, textColor, bgColor, borderColor, cssVars, defaultCSS, hoverCSS, activeCSS, svgFilter, audioHover, audioClick, enableTilt } = titleObj;
     
+    const uid = `title-${id}-${Math.random().toString(36).substr(2,5)}`;
+    let styleStr = '';
+    
+    if (cssVars || defaultCSS || hoverCSS || activeCSS) {
+        styleStr = `<style>
+            .${uid} { ${cssVars || ''} ${defaultCSS || ''} transition: all 0.3s ease; }
+            .${uid}:hover { ${hoverCSS || ''} }
+            .${uid}:active { ${activeCSS || ''} }
+        </style>`;
+    }
+
+    const audioAttrs = `${audioHover ? `data-audio-hover="${escapeHtml(audioHover)}"` : ''} ${audioClick ? `data-audio-click="${escapeHtml(audioClick)}"` : ''}`;
+    const tiltClass = enableTilt ? 'tilt-enabled' : '';
+    const filterHtml = svgFilter ? `<div style="position:absolute; width:0; height:0; overflow:hidden;">${svgFilter}</div>` : '';
+
     return `
-        <span style="display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.15rem 0.4rem; border-radius: 4px; background-color: ${escapeHtml(bgColor || 'transparent')}; border: 1px solid ${escapeHtml(borderColor || 'transparent')}; color: ${escapeHtml(textColor || '#000')}; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; margin-right: 0.4rem; letter-spacing: 0.5px;">
-            ${type === 'image_text' && imageUrl ? `<img src="${escapeHtml(imageUrl)}" style="width: 14px; height: 14px; object-fit: contain;" />` : ''}
-            ${textContent ? `<span>${escapeHtml(textContent)}</span>` : ''}
+        ${styleStr}${filterHtml}
+        <span class="${uid} ${tiltClass}" ${audioAttrs} style="position: relative; display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.15rem 0.4rem; border-radius: 4px; background-color: ${escapeHtml(bgColor || 'transparent')}; border: 1px solid ${escapeHtml(borderColor || 'transparent')}; color: ${escapeHtml(textColor || '#000')}; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; margin-right: 0.4rem; letter-spacing: 0.5px; z-index: 10;">
+            ${type === 'image_text' && imageUrl ? `<img src="${escapeHtml(imageUrl)}" style="width: 14px; height: 14px; object-fit: contain; position: relative; z-index: 2;" />` : ''}
+            ${textContent ? `<span style="position: relative; z-index: 2;">${escapeHtml(textContent)}</span>` : ''}
         </span>
     `;
 }
@@ -445,19 +577,29 @@ function showCropperModal(imageSrc, onSave) {
     let vpWidth, vpHeight;
 
     img.onload = () => {
-        vpWidth = vp.clientWidth;
-        vpHeight = vp.clientHeight;
-        const scaleX = vpWidth / img.width;
-        const scaleY = vpHeight / img.height;
-        scale = Math.max(scaleX, scaleY);
-        zoomSlider.min = scale * 0.2; 
-        zoomSlider.max = scale * 5;
-        zoomSlider.value = scale;
-        zoomVal.textContent = Math.round(scale * 100) + '%';
+        try {
+            vpWidth = vp.clientWidth;
+            vpHeight = vp.clientHeight;
+            const scaleX = vpWidth / img.width;
+            const scaleY = vpHeight / img.height;
+            scale = Math.max(scaleX, scaleY);
+            zoomSlider.min = scale * 0.2; 
+            zoomSlider.max = scale * 5;
+            zoomSlider.value = scale;
+            zoomVal.textContent = Math.round(scale * 100) + '%';
 
-        currentX = (vpWidth - img.width * scale) / 2;
-        currentY = (vpHeight - img.height * scale) / 2;
-        updateTransform();
+            currentX = (vpWidth - img.width * scale) / 2;
+            currentY = (vpHeight - img.height * scale) / 2;
+            updateTransform();
+        } catch (e) {
+            console.error("Error processing image onload:", e);
+            showToast('Lỗi xử lý ảnh. Vui lòng thử ảnh khác.', 'error');
+            backdrop.remove();
+        }
+    };
+    img.onerror = () => {
+        showToast('Không thể tải ảnh. Vui lòng kiểm tra đường dẫn hoặc thử ảnh khác.', 'error');
+        backdrop.remove();
     };
     img.src = imageSrc;
 
@@ -573,8 +715,16 @@ async function showPublicProfile(userId) {
         const displayName = userData.displayName || userData.username;
 
         let frameStyle = '';
-        if (frameObj && frameObj.id !== 'none' && frameObj.url) {
-            frameStyle = `background-image: url('${escapeHtml(frameObj.url)}'); background-position: ${frameObj.bgPosX}% ${frameObj.bgPosY}%; background-size: ${frameObj.bgSize}%; background-repeat: no-repeat; color: white; border: none; text-shadow: 0 1px 2px rgba(0,0,0,0.4);`;
+        let frameClass = '';
+        if (frameObj && frameObj.id !== 'none' && frameObj.designCode) {
+            frameStyle = frameObj.designCode;
+            frameClass = `frame-${frameObj.id}`;
+            if (frameObj.effectCode && !document.getElementById('frame-style-' + frameObj.id)) {
+                const style = document.createElement('style');
+                style.id = 'frame-style-' + frameObj.id;
+                style.textContent = frameObj.effectCode;
+                document.head.appendChild(style);
+            }
         } else {
             frameStyle = `background: var(--surface); color: var(--text-heading); border: 1px solid var(--border);`;
         }
@@ -636,7 +786,7 @@ async function showPublicProfile(userId) {
                 <!-- 2. PHẦN BỔ SUNG BÊN DƯỚI -->
                 <div class="form-card" style="margin-top: 0; padding: 1.5rem; text-align: left; background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-sm);">
                     <h4 style="margin: 0 0 0.75rem 0; font-size: 0.95rem; color: var(--text-heading);">💬 Khung Chat Đang Dùng</h4>
-                    <div style="font-size: 0.9rem; padding: 0.65rem 1rem; border-radius: 1.25rem; word-wrap: break-word; box-shadow: var(--shadow-sm); ${frameStyle}; margin-bottom: 1.5rem; display: inline-block;">
+                    <div class="${frameClass}" style="font-size: 0.9rem; padding: 0.65rem 1rem; border-radius: 1.25rem; word-wrap: break-word; box-shadow: var(--shadow-sm); ${frameStyle}; margin-bottom: 1.5rem; display: inline-block;">
                         Xin chào! Rất vui được gặp bạn 👋
                     </div>
 
@@ -1041,9 +1191,9 @@ function renderGlobalLeaderboard(main) {
     
     main.innerHTML = `
         <style>
-            .lb-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; overflow-x: auto; white-space: nowrap; padding-bottom: 5px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+            .lb-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; max-width: 100%; overflow-x: auto; white-space: nowrap; padding-bottom: 5px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
             .lb-tabs::-webkit-scrollbar { display: none; }
-            .lb-tabs button { flex: 0 0 auto; border-radius: var(--radius-sm); padding: 0.6rem 1rem; }
+            .lb-tabs button { flex: 0 0 auto; white-space: nowrap; border-radius: var(--radius-sm); padding: 0.6rem 1rem; }
             .podium-container { display: flex; align-items: flex-end; justify-content: center; gap: 1rem; margin-top: 2rem; margin-bottom: 2.5rem; height: 220px; }
             .podium-item { display: flex; flex-direction: column; align-items: center; text-align: center; width: 30%; position: relative; animation: cardIn 0.5s var(--ease) backwards; }
             .podium-item.rank-1 { width: 36%; z-index: 3; animation-delay: 0.1s; }
@@ -1328,7 +1478,13 @@ function renderShop(main) {
                     let previewContent = '';
                     if(shopCurrentTab === 'avatars') previewContent = renderAvatarWithBorderObj('A', {id:'none'}, 'lg', '', item.url, item);
                     if(shopCurrentTab === 'borders') previewContent = renderAvatarWithBorderObj('A', item, 'lg');
-                    if(shopCurrentTab === 'frames') previewContent = `<div style="font-size: 0.8rem; padding: 0.5rem 0.75rem; border-radius: 1rem; background-image: url('${escapeHtml(item.url)}'); background-position: ${item.bgPosX}% ${item.bgPosY}%; background-size: ${item.bgSize}%; background-repeat: no-repeat; color: white; border: none; text-shadow: 0 1px 2px rgba(0,0,0,0.4);">Xin chào! 👋</div>`;
+                    if(shopCurrentTab === 'frames') {
+                        let styleBlock = '';
+                        if (item.effectCode && !document.getElementById('frame-style-' + item.id)) {
+                            styleBlock = `<style id="frame-style-${item.id}">${item.effectCode}</style>`;
+                        }
+                        previewContent = `${styleBlock}<div class="frame-${item.id}" style="font-size: 0.8rem; padding: 0.5rem 0.75rem; border-radius: 1rem; ${item.designCode ? item.designCode : 'background: var(--surface); color: var(--text-heading); border: 1px solid var(--border);'}">Xin chào! 👋</div>`;
+                    }
                     if(shopCurrentTab === 'titles') previewContent = `<div style="display:flex; align-items:center;">${getTitleHtml(item)}<span style="font-size: 0.85rem; font-weight: 700; color: var(--text-heading);">Tên</span></div>`;
 
                     return `
@@ -1736,7 +1892,6 @@ function renderDeveloper(main) {
                                         <label style="display:flex; justify-content:space-between;"><span>Kích thước (Scale %)</span><span id="val-scale" style="color:var(--primary-dark);">${currentDevEdit.scale}%</span></label>
                                         <input type="range" id="dev-scale" min="50" max="300" value="${currentDevEdit.scale}" style="width: 100%;">
                                     </div>
-                                </div>
 
                                 <div class="dev-editor-preview">
                                     <span style="font-size: 0.85rem; color: var(--text-soft); font-weight: 600; margin-bottom: 1.5rem;">Xem trước trực tiếp</span>
@@ -1843,30 +1998,29 @@ function renderDeveloper(main) {
                                         <input type="text" id="dev-name" value="${escapeHtml(currentDevEdit.name)}">
                                     </div>
                                     <div class="field" style="margin-bottom: 1rem;">
-                                        <label>Link Ảnh nền (URL)</label>
-                                        <input type="text" id="dev-url" value="${escapeHtml(currentDevEdit.url)}" placeholder="https://...">
-                                    </div>
-                                    <div class="field" style="margin-bottom: 1rem;">
                                         <label>Giá bán (Điểm Shop)</label>
                                         <input type="number" id="dev-price" value="${currentDevEdit.price || 0}" min="0">
                                     </div>
                                     <div class="field" style="margin-bottom: 1rem;">
-                                        <label style="display:flex; justify-content:space-between;"><span>Vị trí X (bg-position-x %)</span><span id="val-x" style="color:var(--primary-dark);">${currentDevEdit.bgPosX}%</span></label>
-                                        <input type="range" id="dev-x" min="0" max="100" value="${currentDevEdit.bgPosX}" style="width: 100%;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                            <label style="margin: 0;">CSS Thiết kế tĩnh (Dùng cho bản thân khung chat)</label>
+                                            <button class="btn-ghost copy-prompt-design" style="padding: 0.2rem 0.5rem; font-size: 0.7rem; border: 1px solid var(--border); border-radius: 4px; box-shadow: var(--shadow-sm); color: var(--primary-dark);">🤖 Copy Prompt AI</button>
+                                        </div>
+                                        <textarea id="dev-design" rows="4" placeholder="VD: background: linear-gradient(to right, #ff7e5f, #feb47b); color: white; border: 2px solid #fff; position: relative; overflow: hidden;" style="font-family: monospace; font-size: 0.85rem; padding: 10px;">${currentDevEdit.designCode || ''}</textarea>
                                     </div>
                                     <div class="field" style="margin-bottom: 1rem;">
-                                        <label style="display:flex; justify-content:space-between;"><span>Vị trí Y (bg-position-y %)</span><span id="val-y" style="color:var(--primary-dark);">${currentDevEdit.bgPosY}%</span></label>
-                                        <input type="range" id="dev-y" min="0" max="100" value="${currentDevEdit.bgPosY}" style="width: 100%;">
-                                    </div>
-                                    <div class="field" style="margin-bottom: 1rem;">
-                                        <label style="display:flex; justify-content:space-between;"><span>Kích thước nền (bg-size %)</span><span id="val-size" style="color:var(--primary-dark);">${currentDevEdit.bgSize}%</span></label>
-                                        <input type="range" id="dev-size" min="10" max="300" value="${currentDevEdit.bgSize}" style="width: 100%;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                            <label style="margin: 0;">CSS Hiệu ứng động (Keyframes / Pseudo-elements)</label>
+                                            <button class="btn-ghost copy-prompt-effect" style="padding: 0.2rem 0.5rem; font-size: 0.7rem; border: 1px solid var(--border); border-radius: 4px; box-shadow: var(--shadow-sm); color: var(--primary-dark);">🤖 Copy Prompt AI</button>
+                                        </div>
+                                        <textarea id="dev-effect" rows="6" placeholder="VD: .frame-${currentDevEdit.id} { animation: pulse 2s infinite; }" style="font-family: monospace; font-size: 0.85rem; padding: 10px;">${currentDevEdit.effectCode || ''}</textarea>
+                                        <span style="font-size:0.75rem; color:var(--text-soft); margin-top:4px;">* Dùng class <strong>.frame-${currentDevEdit.id}</strong> để tạo animation cho khung.</span>
                                     </div>
                                 </div>
 
                                 <div class="dev-editor-preview">
                                     <span style="font-size: 0.85rem; color: var(--text-soft); font-weight: 600; margin-bottom: 1.5rem;">Xem trước trực tiếp</span>
-                                    <div id="dev-preview-box" style="font-size: 0.95rem; padding: 0.65rem 1rem; border-radius: 1.25rem; max-width: 100%; word-wrap: break-word; box-shadow: var(--shadow-sm); border-bottom-right-radius: 4px; background-image: url('${escapeHtml(currentDevEdit.url)}'); background-position: ${currentDevEdit.bgPosX}% ${currentDevEdit.bgPosY}%; background-size: ${currentDevEdit.bgSize}%; background-repeat: no-repeat; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.4);">
+                                    <div id="dev-preview-box" class="frame-${currentDevEdit.id}" style="font-size: 0.95rem; padding: 0.65rem 1rem; border-radius: 1.25rem; max-width: 100%; word-wrap: break-word; box-shadow: var(--shadow-sm); border-bottom-right-radius: 4px; ${currentDevEdit.designCode || 'background: var(--surface); border: 1px solid var(--border);'}">
                                         Xin chào! Đây là tin nhắn thử nghiệm... 👋
                                     </div>
                                 </div>
@@ -1882,19 +2036,22 @@ function renderDeveloper(main) {
             });
 
             workspace.querySelector('#dev-add-btn').addEventListener('click', async () => {
+                if (!(await checkDevPermission())) return;
                 const btn = workspace.querySelector('#dev-add-btn');
                 btn.disabled = true; btn.textContent = '...';
                 try {
-                    const newRef = await db.ref('app_chat_bubbles').push({
-                        name: 'Khung Mới ' + Math.floor(Math.random()*100), url: '', bgPosX: 50, bgPosY: 50, bgSize: 100, price: 0
+                    const newIdRef = db.ref('app_chat_bubbles').push();
+                    await newIdRef.set({
+                        name: 'Khung Code Mới', designCode: 'background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; border: 2px solid #60a5fa;', effectCode: '', price: 0
                     });
-                    devSelFrameId = newRef.key;
-                    showToast('Đã thêm Khung mới lên Firebase');
+                    devSelFrameId = newIdRef.key;
+                    showToast('Đã tạo template Khung mới lên Firebase');
                 } catch(e) { showToast('Lỗi khi thêm', 'error'); }
             });
 
             if (devSelFrameId !== 'none') {
-                workspace.querySelector('#dev-delete-btn').addEventListener('click', () => {
+                workspace.querySelector('#dev-delete-btn').addEventListener('click', async () => {
+                    if (!(await checkDevPermission())) return;
                     showConfirmModal({ title: 'Xóa?', message: 'Chắc chắn muốn xóa Khung Chat này?', confirmText: 'Xóa ngay', onConfirm: async () => {
                         try {
                             await db.ref(`app_chat_bubbles/${devSelFrameId}`).remove();
@@ -1913,25 +2070,46 @@ function renderDeveloper(main) {
 
                 const refreshPreview = () => {
                     const box = document.getElementById('dev-preview-box');
-                    box.style.backgroundImage = `url('${escapeHtml(currentDevEdit.url)}')`;
-                    box.style.backgroundPosition = `${currentDevEdit.bgPosX}% ${currentDevEdit.bgPosY}%`;
-                    box.style.backgroundSize = `${currentDevEdit.bgSize}%`;
+                    box.style.cssText = `font-size: 0.95rem; padding: 0.65rem 1rem; border-radius: 1.25rem; max-width: 100%; word-wrap: break-word; box-shadow: var(--shadow-sm); border-bottom-right-radius: 4px; ${currentDevEdit.designCode || ''}`;
+                    
+                    let styleTag = document.getElementById('dev-preview-style');
+                    if (!styleTag) {
+                        styleTag = document.createElement('style');
+                        styleTag.id = 'dev-preview-style';
+                        document.head.appendChild(styleTag);
+                    }
+                    styleTag.textContent = currentDevEdit.effectCode || '';
                 };
 
                 workspace.querySelector('#dev-name').addEventListener('input', e => { currentDevEdit.name = e.target.value; });
-                workspace.querySelector('#dev-url').addEventListener('input', e => { currentDevEdit.url = e.target.value; refreshPreview(); });
                 workspace.querySelector('#dev-price').addEventListener('input', e => { currentDevEdit.price = Number(e.target.value); });
-                workspace.querySelector('#dev-x').addEventListener('input', e => { currentDevEdit.bgPosX = Number(e.target.value); document.getElementById('val-x').textContent = e.target.value+'%'; refreshPreview(); });
-                workspace.querySelector('#dev-y').addEventListener('input', e => { currentDevEdit.bgPosY = Number(e.target.value); document.getElementById('val-y').textContent = e.target.value+'%'; refreshPreview(); });
-                workspace.querySelector('#dev-size').addEventListener('input', e => { currentDevEdit.bgSize = Number(e.target.value); document.getElementById('val-size').textContent = e.target.value+'%'; refreshPreview(); });
+                workspace.querySelector('#dev-design').addEventListener('input', e => { currentDevEdit.designCode = e.target.value; refreshPreview(); });
+                workspace.querySelector('#dev-effect').addEventListener('input', e => { currentDevEdit.effectCode = e.target.value; refreshPreview(); });
+
+                const copyDesignBtn = workspace.querySelector('.copy-prompt-design');
+                if (copyDesignBtn) {
+                    copyDesignBtn.addEventListener('click', () => {
+                        const promptText = "Hãy viết CSS inline (chỉ các thuộc tính CSS, ngăn cách bởi dấu chấm phẩy) để trang trí cho một thẻ DIV chat bubble. Tôi muốn một phong cách Cyberpunk. Yêu cầu: Nền gradient tối màu chuyển từ tím sang xanh dương đen. Chữ màu trắng sáng. Viền màu xanh dương sáng 1px. Bo tròn góc mượt mà. Không cần viết class hay selector, chỉ viết chuỗi style nội tuyến (inline CSS).";
+                        navigator.clipboard.writeText(promptText).then(() => showToast('Đã copy Prompt Thiết kế!'));
+                    });
+                }
+
+                const copyEffectBtn = workspace.querySelector('.copy-prompt-effect');
+                if (copyEffectBtn) {
+                    copyEffectBtn.addEventListener('click', () => {
+                        const promptText = `Tôi có một thẻ Div chat bubble mang class .frame-${currentDevEdit.id}. Thẻ này đã được set position: relative và overflow: hidden ở inline CSS. Hãy viết một đoạn mã CSS <style> để tạo hiệu ứng:\n1. Viền sáng lướt quanh khung chat liên tục (dùng pseudo-element ::before hoặc ::after kết hợp với animation dạng conic-gradient xoay vòng).\n2. Có một chút ánh sáng (glow/box-shadow) màu Neon bên ngoài khung đập nhịp nhàng (pulse).\nHãy code tối ưu, sử dụng keyframes và selector chuẩn xác nhắm vào class .frame-${currentDevEdit.id}.`;
+                        navigator.clipboard.writeText(promptText).then(() => showToast('Đã copy Prompt Hiệu ứng!'));
+                    });
+                }
 
                 workspace.querySelector('#dev-save-btn').addEventListener('click', async () => {
+                    if (!(await checkDevPermission())) return;
                     const btn = workspace.querySelector('#dev-save-btn');
                     btn.disabled = true; btn.textContent = 'Đang lưu...';
                     try {
                         const { id, ...dataToSave } = currentDevEdit;
                         await db.ref(`app_chat_bubbles/${id}`).update(dataToSave);
-                        showToast('Đã đồng bộ lên Firebase!');
+                        showToast('Đã đồng bộ code lên Firebase!');
                     } catch(e) { showToast('Lỗi đồng bộ', 'error'); }
                     finally { btn.disabled = false; btn.textContent = '💾 Cập nhật lên Firebase'; }
                 });
@@ -2085,6 +2263,16 @@ function renderDeveloper(main) {
             }
         } else if (devCurrentTab === 'avatars') {
             const presets = getPresetAvatars();
+            
+            if (!currentDevEdit || currentDevEdit.id !== (devSelPresetId || 'dummy')) {
+                const activeItem = presets.find(p => p.id === devSelPresetId) || { id: 'dummy', name: 'Chưa có', url: '', offsetX: 0, offsetY: 0, scale: 100, price: 0 };
+                currentDevEdit = JSON.parse(JSON.stringify(activeItem));
+            }
+            if (!currentDevEdit.avatarType) currentDevEdit.avatarType = 'image';
+            if (!currentDevEdit.effectLayer) currentDevEdit.effectLayer = 'back';
+            if (!currentDevEdit.designCode) currentDevEdit.designCode = '';
+            if (!currentDevEdit.effectCode) currentDevEdit.effectCode = '';
+
             workspace.innerHTML = `
                 <div class="dev-editor-layout">
                     <div class="form-card dev-editor-inputs" style="max-height: 600px; overflow-y: auto;">
@@ -2096,7 +2284,7 @@ function renderDeveloper(main) {
                             ${presets.map((item) => `
                                 <div class="dev-item ${item.id === devSelPresetId ? 'active' : ''}" data-id="${item.id}" style="padding: 0.75rem; border: 1.5px solid ${item.id === devSelPresetId ? 'var(--primary)' : 'var(--border)'}; border-radius: var(--radius-sm); cursor: pointer; display: flex; align-items: center; gap: 0.5rem; background: ${item.id === devSelPresetId ? 'rgba(167, 139, 250, 0.1)' : 'var(--surface)'}; font-weight: 600;">
                                     <div class="icon-slot" style="width:24px; height:24px; flex-shrink:0;">
-                                        ${item.url ? `<img src="${escapeHtml(item.url)}" style="width: 100%; height: 100%; object-fit: contain;" />` : `<div style="width:100%; height:100%; text-align:center; opacity:0.5;">🚫</div>`}
+                                        ${item.url ? `<img src="${escapeHtml(item.url)}" style="width: 100%; height: 100%; object-fit: contain;" />` : (item.avatarType === 'code' ? `<div style="font-size:1.2rem;">💻</div>` : `<div style="width:100%; height:100%; text-align:center; opacity:0.5;">🚫</div>`)}
                                     </div>
                                     <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(item.name)}</span>
                                 </div>
@@ -2115,36 +2303,77 @@ function renderDeveloper(main) {
                             
                             <div class="dev-editor-layout">
                                 <div class="dev-editor-inputs">
-                                    <div class="field" style="margin-bottom: 1rem;">
-                                        <label>Tên Avatar</label>
-                                        <input type="text" id="dev-name" value="${escapeHtml(currentDevEdit.name)}">
+                                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
+                                        <button class="btn-outline ${currentDevEdit.avatarType === 'image' ? 'active' : ''}" id="mode-img" style="flex:1; padding:0.5rem;">📸 Ảnh + Hiệu ứng</button>
+                                        <button class="btn-outline ${currentDevEdit.avatarType === 'code' ? 'active' : ''}" id="mode-code" style="flex:1; padding:0.5rem;">💻 Code Thuần</button>
                                     </div>
+
                                     <div class="field" style="margin-bottom: 1rem;">
-                                        <label>Link Ảnh (PNG URL)</label>
-                                        <input type="text" id="dev-url" value="${escapeHtml(currentDevEdit.url)}" placeholder="https://...">
+                                        <label>Tên Avatar Preset</label>
+                                        <input type="text" id="dev-name" value="${escapeHtml(currentDevEdit.name)}">
                                     </div>
                                     <div class="field" style="margin-bottom: 1rem;">
                                         <label>Giá bán (Điểm Shop)</label>
                                         <input type="number" id="dev-price" value="${currentDevEdit.price || 0}" min="0">
                                     </div>
-                                    <div class="field" style="margin-bottom: 1rem;">
-                                        <label style="display:flex; justify-content:space-between;"><span>Tọa độ X (Ngang)</span><span id="val-x" style="color:var(--primary-dark);">${currentDevEdit.offsetX}px</span></label>
-                                        <input type="range" id="dev-x" min="-50" max="50" value="${currentDevEdit.offsetX}" style="width: 100%;">
+
+                                    <div id="wrap-image-mode" style="display: ${currentDevEdit.avatarType === 'image' ? 'block' : 'none'};">
+                                        <div class="field" style="margin-bottom: 1rem;">
+                                            <label>Link Ảnh (Dùng làm Base UI)</label>
+                                            <input type="text" id="dev-url" value="${escapeHtml(currentDevEdit.url)}" placeholder="https://...">
+                                        </div>
+                                        <div class="field" style="margin-bottom: 1rem;">
+                                            <label style="display:flex; justify-content:space-between;"><span>Tọa độ X (Ngang)</span><span id="val-x" style="color:var(--primary-dark);">${currentDevEdit.offsetX}px</span></label>
+                                            <input type="range" id="dev-x" min="-50" max="50" value="${currentDevEdit.offsetX}" style="width: 100%;">
+                                        </div>
+                                        <div class="field" style="margin-bottom: 1rem;">
+                                            <label style="display:flex; justify-content:space-between;"><span>Tọa độ Y (Dọc)</span><span id="val-y" style="color:var(--primary-dark);">${currentDevEdit.offsetY}px</span></label>
+                                            <input type="range" id="dev-y" min="-50" max="50" value="${currentDevEdit.offsetY}" style="width: 100%;">
+                                        </div>
+                                        <div class="field" style="margin-bottom: 1rem;">
+                                            <label style="display:flex; justify-content:space-between;"><span>Kích thước (Scale %)</span><span id="val-scale" style="color:var(--primary-dark);">${currentDevEdit.scale}%</span></label>
+                                            <input type="range" id="dev-scale" min="50" max="300" value="${currentDevEdit.scale}" style="width: 100%;">
+                                        </div>
                                     </div>
-                                    <div class="field" style="margin-bottom: 1rem;">
-                                        <label style="display:flex; justify-content:space-between;"><span>Tọa độ Y (Dọc)</span><span id="val-y" style="color:var(--primary-dark);">${currentDevEdit.offsetY}px</span></label>
-                                        <input type="range" id="dev-y" min="-50" max="50" value="${currentDevEdit.offsetY}" style="width: 100%;">
+
+                                    <div id="wrap-code-mode" style="display: ${currentDevEdit.avatarType === 'code' ? 'block' : 'none'};">
+                                        <div class="field" style="margin-bottom: 1rem;">
+                                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                                <label style="margin: 0;">Code Thiết kế (HTML/SVG)</label>
+                                                <button id="copy-prompt-design-ava" class="btn-ghost" style="padding: 0.2rem 0.5rem; font-size: 0.7rem; border: 1px solid var(--border); border-radius: 4px; color: var(--primary-dark);">🤖 Copy Prompt</button>
+                                            </div>
+                                            <textarea id="dev-design" rows="4" placeholder="<svg>...</svg> hoặc <div>...</div>" style="font-family: monospace; font-size: 0.85rem; padding: 10px;">${currentDevEdit.designCode}</textarea>
+                                        </div>
                                     </div>
+
                                     <div class="field" style="margin-bottom: 1rem;">
-                                        <label style="display:flex; justify-content:space-between;"><span>Kích thước (Scale %)</span><span id="val-scale" style="color:var(--primary-dark);">${currentDevEdit.scale}%</span></label>
-                                        <input type="range" id="dev-scale" min="50" max="300" value="${currentDevEdit.scale}" style="width: 100%;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                            <label style="margin: 0;">Code Hiệu ứng (CSS Keyframes)</label>
+                                            <button id="copy-prompt-effect-ava" class="btn-ghost" style="padding: 0.2rem 0.5rem; font-size: 0.7rem; border: 1px solid var(--border); border-radius: 4px; color: var(--primary-dark);">🤖 Copy Prompt</button>
+                                        </div>
+                                        <textarea id="dev-effect" rows="4" placeholder=".preset-${currentDevEdit.id}-effect { ... }" style="font-family: monospace; font-size: 0.85rem; padding: 10px;">${currentDevEdit.effectCode}</textarea>
+                                        <span style="font-size:0.75rem; color:var(--text-soft); margin-top:4px;">* Selector: dùng <strong>.preset-${currentDevEdit.id}-effect</strong> (cho hào quang/viền ngoài) hoặc <strong>.preset-${currentDevEdit.id}-design</strong> (cho code thuần bên trong).</span>
+                                    </div>
+
+                                    <div class="field" style="margin-bottom: 1rem; display: ${currentDevEdit.avatarType === 'image' ? 'flex' : 'none'}; flex-direction:column;" id="wrap-layer">
+                                        <label>Vị trí Hiệu ứng (Image Mode)</label>
+                                        <select id="dev-layer" style="padding: 0.5rem; border-radius: var(--radius-sm); border: 1.5px solid var(--border);">
+                                            <option value="back" ${currentDevEdit.effectLayer === 'back' ? 'selected' : ''}>Phía sau ảnh (Hào quang, Glow)</option>
+                                            <option value="front" ${currentDevEdit.effectLayer === 'front' ? 'selected' : ''}>Phía trước ảnh (Viền nổi, Khói, Tuyết)</option>
+                                        </select>
                                     </div>
                                 </div>
 
                                 <div class="dev-editor-preview">
-                                    <span style="font-size: 0.85rem; color: var(--text-soft); font-weight: 600; margin-bottom: 1.5rem;">Xem trước trực tiếp</span>
-                                    <div id="dev-preview-box">
-                                        ${renderAvatarWithBorderObj('A', {id:'none'}, 'lg', '', currentDevEdit.url, currentDevEdit)}
+                                    <span style="font-size: 0.85rem; color: var(--text-soft); font-weight: 600; margin-bottom: 1rem;">Live Multi-size Preview</span>
+                                    <div style="display:flex; gap:0.5rem; margin-bottom: 1.5rem;">
+                                        <button id="bg-light" class="btn-outline" style="padding: 0.3rem 0.6rem; font-size:0.75rem;">Nền Sáng</button>
+                                        <button id="bg-dark" class="btn-outline" style="padding: 0.3rem 0.6rem; font-size:0.75rem; background: #1e1e2f; color: white;">Nền Tối</button>
+                                    </div>
+                                    <div id="dev-preview-box" style="display:flex; align-items:center; justify-content:center; gap:1.5rem; padding:2rem; border-radius:var(--radius-md); background:#f8f7ff; width:100%; transition:background 0.3s; flex-wrap:wrap;">
+                                        ${renderAvatarWithBorderObj('A', {id:'none'}, 'sm', '', currentDevEdit.avatarType === 'image' ? currentDevEdit.url : '', currentDevEdit)}
+                                        ${renderAvatarWithBorderObj('A', {id:'none'}, 'md', '', currentDevEdit.avatarType === 'image' ? currentDevEdit.url : '', currentDevEdit)}
+                                        ${renderAvatarWithBorderObj('A', {id:'none'}, 'lg', '', currentDevEdit.avatarType === 'image' ? currentDevEdit.url : '', currentDevEdit)}
                                     </div>
                                 </div>
                             </div>
@@ -2162,20 +2391,25 @@ function renderDeveloper(main) {
                 });
             });
 
-            workspace.querySelector('#dev-add-btn').addEventListener('click', async () => {
-                const btn = workspace.querySelector('#dev-add-btn');
-                btn.disabled = true; btn.textContent = '...';
-                try {
-                    const newRef = await db.ref('app_preset_avatars').push({
-                        name: 'Avatar Mới ' + Math.floor(Math.random()*100), url: '', offsetX: 0, offsetY: 0, scale: 100, price: 0
-                    });
-                    devSelPresetId = newRef.key;
-                    showToast('Đã thêm Avatar mới lên Firebase');
-                } catch(e) { showToast('Lỗi khi thêm', 'error'); }
-            });
+            const btnAdd = workspace.querySelector('#dev-add-btn');
+            if (btnAdd) {
+                btnAdd.addEventListener('click', async () => {
+                    if (!(await checkDevPermission())) return;
+                    btnAdd.disabled = true; btnAdd.textContent = '...';
+                    try {
+                        const newRef = await db.ref('app_preset_avatars').push({
+                            name: 'Avatar Mới ' + Math.floor(Math.random()*100), url: '', offsetX: 0, offsetY: 0, scale: 100, price: 0,
+                            avatarType: 'image', effectLayer: 'back', designCode: '', effectCode: ''
+                        });
+                        devSelPresetId = newRef.key;
+                        showToast('Đã thêm Avatar mới lên Firebase');
+                    } catch(e) { showToast('Lỗi khi thêm', 'error'); }
+                });
+            }
 
             if (devSelPresetId !== 'none' && devSelPresetId !== 'dummy' && currentDevEdit.id !== 'dummy') {
-                workspace.querySelector('#dev-delete-btn').addEventListener('click', () => {
+                workspace.querySelector('#dev-delete-btn').addEventListener('click', async () => {
+                    if (!(await checkDevPermission())) return;
                     showConfirmModal({
                         title: 'Xóa?', message: 'Hành động này sẽ Xóa avatar trên toàn hệ thống và Reset người dùng đang dùng.', confirmText: 'Xóa ngay',
                         onConfirm: async () => {
@@ -2197,8 +2431,18 @@ function renderDeveloper(main) {
 
                 const refreshPreview = () => {
                     const box = document.getElementById('dev-preview-box');
-                    if (box) box.innerHTML = renderAvatarWithBorderObj('A', {id:'none'}, 'lg', '', currentDevEdit.url, currentDevEdit);
+                    if (box) box.innerHTML = `
+                        ${renderAvatarWithBorderObj('A', {id:'none'}, 'sm', '', currentDevEdit.avatarType === 'image' ? currentDevEdit.url : '', currentDevEdit)}
+                        ${renderAvatarWithBorderObj('A', {id:'none'}, 'md', '', currentDevEdit.avatarType === 'image' ? currentDevEdit.url : '', currentDevEdit)}
+                        ${renderAvatarWithBorderObj('A', {id:'none'}, 'lg', '', currentDevEdit.avatarType === 'image' ? currentDevEdit.url : '', currentDevEdit)}
+                    `;
                 };
+
+                workspace.querySelector('#mode-img').addEventListener('click', () => { currentDevEdit.avatarType = 'image'; renderUI(); });
+                workspace.querySelector('#mode-code').addEventListener('click', () => { currentDevEdit.avatarType = 'code'; renderUI(); });
+                
+                workspace.querySelector('#bg-light').addEventListener('click', () => document.getElementById('dev-preview-box').style.background = '#f8f7ff');
+                workspace.querySelector('#bg-dark').addEventListener('click', () => document.getElementById('dev-preview-box').style.background = '#1e1e2f');
 
                 workspace.querySelector('#dev-name').addEventListener('input', e => { currentDevEdit.name = e.target.value; });
                 workspace.querySelector('#dev-url').addEventListener('input', e => { currentDevEdit.url = e.target.value; refreshPreview(); });
@@ -2206,8 +2450,29 @@ function renderDeveloper(main) {
                 workspace.querySelector('#dev-x').addEventListener('input', e => { currentDevEdit.offsetX = Number(e.target.value); document.getElementById('val-x').textContent = e.target.value+'px'; refreshPreview(); });
                 workspace.querySelector('#dev-y').addEventListener('input', e => { currentDevEdit.offsetY = Number(e.target.value); document.getElementById('val-y').textContent = e.target.value+'px'; refreshPreview(); });
                 workspace.querySelector('#dev-scale').addEventListener('input', e => { currentDevEdit.scale = Number(e.target.value); document.getElementById('val-scale').textContent = e.target.value+'%'; refreshPreview(); });
+                
+                workspace.querySelector('#dev-design').addEventListener('input', e => { currentDevEdit.designCode = e.target.value; refreshPreview(); });
+                workspace.querySelector('#dev-effect').addEventListener('input', e => { currentDevEdit.effectCode = e.target.value; refreshPreview(); });
+                workspace.querySelector('#dev-layer').addEventListener('change', e => { currentDevEdit.effectLayer = e.target.value; refreshPreview(); });
+
+                // Prompts
+                const promptAvaDesign = workspace.querySelector('#copy-prompt-design-ava');
+                if (promptAvaDesign) promptAvaDesign.addEventListener('click', () => {
+                    const text = `Tôi cần code HTML/SVG và CSS inline để tạo một Avatar [Cyberpunk / Hiệp sĩ / Cổ tích...]. Kích thước linh hoạt 100%. Phần thiết kế bọc trong thẻ div class="preset-${currentDevEdit.id}-design". Hãy viết mã tối giản, không cần giải thích.`;
+                    navigator.clipboard.writeText(text).then(() => showToast('Đã copy Prompt Thiết Kế!'));
+                });
+                
+                const promptAvaEffect = workspace.querySelector('#copy-prompt-effect-ava');
+                if (promptAvaEffect) promptAvaEffect.addEventListener('click', () => {
+                    const mode = currentDevEdit.avatarType;
+                    const text = mode === 'image' 
+                        ? `Tôi có một avatar tròn. Hãy viết CSS Animation (dùng thẻ <style>) để tạo hiệu ứng [phát sáng / viền lửa xoay / hào quang ma thuật] cho thẻ div mang class .preset-${currentDevEdit.id}-effect. Thẻ này được set position: absolute lồng cùng avatar. Đảm bảo dùng keyframes chuẩn.`
+                        : `Hãy viết CSS Animation (dùng thẻ <style>) để tạo chuyển động nhịp nhàng, lấp lánh cho Avatar có class .preset-${currentDevEdit.id}-design và hào quang bao quanh ở class .preset-${currentDevEdit.id}-effect. Dùng keyframes chuẩn và hiệu ứng bắt mắt.`;
+                    navigator.clipboard.writeText(text).then(() => showToast('Đã copy Prompt Hiệu Ứng!'));
+                });
 
                 workspace.querySelector('#dev-save-btn').addEventListener('click', async () => {
+                    if (!(await checkDevPermission())) return;
                     const btn = workspace.querySelector('#dev-save-btn');
                     btn.disabled = true; btn.textContent = 'Đang lưu...';
                     try {
@@ -2676,13 +2941,33 @@ function renderChat(main) {
             </div>
         `;
 
-        const bubbleBaseStyle = `font-size: 0.95rem; padding: 0.65rem 1rem; border-radius: 1.25rem; max-width: 100%; word-wrap: break-word; box-shadow: var(--shadow-sm);`;
+        const bubbleBaseStyle = `font-size: 0.95rem; padding: 0.65rem 1rem; border-radius: 1.25rem; max-width: 100%; word-wrap: break-word; box-shadow: var(--shadow-sm); position: relative; z-index: 2;`;
         const bubbleRadiusStyle = isOwn ? `border-bottom-right-radius: 4px;` : `border-bottom-left-radius: 4px;`;
 
         const frameObj = msg.chatFrameObj || getFrameById(msg.chatFrameId);
         let frameStyle = '';
-        if (frameObj && frameObj.id !== 'none' && frameObj.url) {
-            frameStyle = `background-image: url('${escapeHtml(frameObj.url)}'); background-position: ${frameObj.bgPosX}% ${frameObj.bgPosY}%; background-size: ${frameObj.bgSize}%; background-repeat: no-repeat; color: white; border: none; text-shadow: 0 1px 2px rgba(0,0,0,0.4);`;
+        let frameClass = '';
+        let sbStyleHtml = '';
+        let audioAttrs = '';
+        let tiltClass = '';
+        let filterHtml = '';
+        
+        if (frameObj && frameObj.id !== 'none') {
+            const { id, designCode, effectCode, cssVars, defaultCSS, hoverCSS, activeCSS, audioHover, audioClick, enableTilt, svgFilter } = frameObj;
+            const uId = `f-${id}-${msgId}`;
+            frameClass = `frame-${id} ${uId}`;
+            frameStyle = designCode || '';
+            
+            sbStyleHtml = `<style>
+                .${uId} { ${cssVars || ''} ${defaultCSS || ''} transition: all 0.3s ease; }
+                .${uId}:hover { ${hoverCSS || ''} }
+                .${uId}:active { ${activeCSS || ''} }
+                ${effectCode ? effectCode.replace(new RegExp(`\\.frame-${id}`, 'g'), `.${uId}`) : ''}
+            </style>`;
+            
+            audioAttrs = `${audioHover ? `data-audio-hover="${escapeHtml(audioHover)}"` : ''} ${audioClick ? `data-audio-click="${escapeHtml(audioClick)}"` : ''}`;
+            tiltClass = enableTilt ? 'tilt-enabled' : '';
+            if (svgFilter) filterHtml = `<div style="position:absolute; width:0; height:0; overflow:hidden;">${svgFilter}</div>`;
         } else {
             frameStyle = isOwn
                 ? `background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; border: none;`
@@ -2717,10 +3002,11 @@ function renderChat(main) {
 
         if (isOwn) {
             div.innerHTML = `
+                ${sbStyleHtml} ${filterHtml}
                 <div style="display: flex; flex-direction: column; align-items: flex-end; margin-right: 0.5rem; max-width: 75%;">
                     ${nameWithTitleHtml}
-                    <div class="chat-message-container">
-                        <div style="${bubbleBaseStyle} ${bubbleRadiusStyle} ${frameStyle}">
+                    <div class="chat-message-container ${tiltClass}" ${audioAttrs}>
+                        <div class="${frameClass}" style="${bubbleBaseStyle} ${bubbleRadiusStyle} ${frameStyle}">
                             ${escapeHtml(msg.text)}
                         </div>
                         ${badgesHtml}
@@ -2732,11 +3018,12 @@ function renderChat(main) {
             `;
         } else {
             div.innerHTML = `
+                ${sbStyleHtml} ${filterHtml}
                 ${avatarHtml}
                 <div style="display: flex; flex-direction: column; align-items: flex-start; margin-left: 0.5rem; max-width: 75%;">
                     ${nameWithTitleHtml}
-                    <div class="chat-message-container">
-                        <div style="${bubbleBaseStyle} ${bubbleRadiusStyle} ${frameStyle}">
+                    <div class="chat-message-container ${tiltClass}" ${audioAttrs}>
+                        <div class="${frameClass}" style="${bubbleBaseStyle} ${bubbleRadiusStyle} ${frameStyle}">
                             ${escapeHtml(msg.text)}
                         </div>
                         ${badgesHtml}
@@ -3444,11 +3731,16 @@ async function renderStats(main) {
                 ${frames.map(f => {
                     const price = Number(f.price || 0);
                     const isOwned = price === 0 || (inventory.frames && inventory.frames.includes(f.id));
+                    let styleBlock = '';
+                    if (f.effectCode && !document.getElementById('frame-style-' + f.id)) {
+                        styleBlock = `<style id="frame-style-${f.id}">${f.effectCode}</style>`;
+                    }
                     return `
                     <div class="picker-card ${currentFrameId === f.id ? 'active' : ''} ${!isOwned ? 'item-locked' : ''}" data-group="frame" data-value="${f.id}" data-owned="${isOwned}">
                         ${!isOwned ? `<div class="locked-overlay">🔒</div>` : ''}
                         <div class="picker-preview">
-                            <div style="font-size: 0.8rem; padding: 0.5rem 0.75rem; border-radius: 1rem; ${f.url ? `background-image: url('${escapeHtml(f.url)}'); background-position: ${f.bgPosX}% ${f.bgPosY}%; background-size: ${f.bgSize}%; background-repeat: no-repeat; color: white; border: none; text-shadow: 0 1px 2px rgba(0,0,0,0.4);` : 'background: var(--surface); color: var(--text-heading); border: 1px solid var(--border);'}">
+                            ${styleBlock}
+                            <div class="frame-${f.id}" style="font-size: 0.8rem; padding: 0.5rem 0.75rem; border-radius: 1rem; ${f.designCode ? f.designCode : 'background: var(--surface); color: var(--text-heading); border: 1px solid var(--border);'}">
                                 Xin chào! 👋
                             </div>
                         </div>
