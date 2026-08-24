@@ -14,6 +14,49 @@ function showToast(message, type = 'success') {
     setTimeout(() => el.remove(), 3000);
 }
 
+function installMotionInteractions() {
+    if (window.__exoticMotionInstalled) return;
+    window.__exoticMotionInstalled = true;
+
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) return;
+
+    const rippleTargets = [
+        'button',
+        '.option-item',
+        '.choice-card',
+        '.like-container',
+        '.slide-dot',
+        '.nav-item',
+        '.nav-item-mobile',
+        '.lb-row'
+    ].join(', ');
+
+    document.addEventListener('pointerdown', (e) => {
+        const target = e.target.closest(rippleTargets);
+        if (!target) return;
+        if (e.target.closest('input, textarea, select')) return;
+        if (target.disabled || target.classList.contains('disabled') || target.classList.contains('item-locked')) return;
+
+        const rect = target.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+
+        const ripple = document.createElement('span');
+        const size = Math.max(rect.width, rect.height) * 1.1;
+        ripple.className = 'ui-ripple';
+        ripple.style.width = `${size}px`;
+        ripple.style.height = `${size}px`;
+        ripple.style.left = `${e.clientX - rect.left - size / 2}px`;
+        ripple.style.top = `${e.clientY - rect.top - size / 2}px`;
+
+        target.querySelectorAll(':scope > .ui-ripple').forEach(el => el.remove());
+        target.appendChild(ripple);
+        ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
+    }, { passive: true });
+}
+
+installMotionInteractions();
+
 const checkDevPermission = async () => {
     const currentUser = getCurrentUser();
     if (!currentUser) return false;
